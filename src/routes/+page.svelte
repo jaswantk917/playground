@@ -1,5 +1,14 @@
 <script lang="ts">
     import { onMount } from "svelte";
+    let audioCtx: AudioContext;
+    let crashBuffer: AudioBuffer;
+
+    async function loadSound() {
+        audioCtx = new AudioContext();
+        const res = await fetch("/sounds/crash.wav"); // short, bassy
+        const arr = await res.arrayBuffer();
+        crashBuffer = await audioCtx.decodeAudioData(arr);
+    }
 
     // --- 1. CONFIGURATION (Reactive State via Runes) ---
     let carCount = $state(30);
@@ -61,6 +70,10 @@
             }
             // Emergency stop prevents overlap
             if (distance < CAR_LENGTH) {
+                const impact = Math.min(car.vel / maxSpeed, 1);
+
+                playCrash(impact);
+
                 car.vel = 0;
                 car.pos -= 0.5; // Slight bounce back to separate
             }
@@ -85,10 +98,35 @@
 
         requestAnimationFrame(update);
     }
+    function playCrash(intensity: number) {
+        if (!crashBuffer) return;
+
+        const src = audioCtx.createBufferSource();
+        const gain = audioCtx.createGain();
+        const delay = audioCtx.createDelay();
+
+        src.buffer = crashBuffer;
+
+        // pitch = impact + tiny randomness (prevents repetition fatigue)
+        src.playbackRate.value =
+            (0.8 + intensity * 0.4) * (0.95 + Math.random() * 0.1);
+
+        // loudness = impact strength
+        gain.gain.value = Math.min(intensity, 1);
+
+        // micro echo (physical "clack")
+        delay.delayTime.value = 0.03;
+
+        // audio graph
+        src.connect(gain).connect(delay).connect(audioCtx.destination);
+
+        src.start();
+    }
 
     // --- 4. LIFECYCLE ---
     onMount(() => {
         initCars();
+        loadSound();
         simulationRunning = true;
         requestAnimationFrame(update);
 
@@ -186,21 +224,82 @@
                     stroke-dasharray="10 20"
                 />
 
-                {#each cars as car (car.id)}
-                    <g
+                {#each cars as car (car.id)}<g
                         transform="rotate({(car.pos / TRACK_LENGTH) *
                             360} 250 250)"
                     >
-                        <rect
-                            x={250 - 10}
-                            y={250 - TRACK_RADIUS - 6}
-                            width="24"
-                            height="12"
-                            rx="3"
-                            fill={car.color}
-                            stroke="rgba(0,0,0,0.3)"
-                            stroke-width="1"
-                        />
+                        <!-- car -->
+                        <g
+                            transform="translate({250 - 12} {250 -
+                                TRACK_RADIUS -
+                                10})"
+                        >
+                            <!-- body -->
+                            <rect
+                                x="0"
+                                y="0"
+                                width="24"
+                                height="16"
+                                rx="4"
+                                fill={car.color}
+                                stroke="rgba(0,0,0,0.3)"
+                                stroke-width="1"
+                            />
+
+                            <!-- windshield -->
+                            <rect
+                                x="4"
+                                y="2"
+                                width="16"
+                                height="4"
+                                rx="2"
+                                fill="rgba(255,255,255,0.5)"
+                            />
+
+                            <!-- rear window -->
+                            <rect
+                                x="6"
+                                y="10"
+                                width="12"
+                                height="3"
+                                rx="1.5"
+                                fill="rgba(0,0,0,0.2)"
+                            />
+
+                            <!-- wheels -->
+                            <rect
+                                x="-2"
+                                y="3"
+                                width="2"
+                                height="4"
+                                rx="1"
+                                fill="#222"
+                            />
+                            <rect
+                                x="-2"
+                                y="9"
+                                width="2"
+                                height="4"
+                                rx="1"
+                                fill="#222"
+                            />
+                            <rect
+                                x="24"
+                                y="3"
+                                width="2"
+                                height="4"
+                                rx="1"
+                                fill="#222"
+                            />
+                            <rect
+                                x="24"
+                                y="9"
+                                width="2"
+                                height="4"
+                                rx="1"
+                                fill="#222"
+                            />
+                        </g>
                     </g>
                 {/each}
             </svg>
