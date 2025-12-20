@@ -1,157 +1,72 @@
 <script lang="ts">
     import { onMount } from "svelte";
+    import { Canvas } from "@threlte/core";
+    import Scene from "./Scene.svelte";
+
+    // --- CONFIGURATION STATE ---
+    let carCount = $state(30);
+    let maxSpeed = $state(5);
+    let jitter = $state(0.1);
+
+    // --- AUDIO SYSTEM ---
     let audioCtx: AudioContext;
     let crashBuffer: AudioBuffer;
 
     async function loadSound() {
-        audioCtx = new AudioContext();
-        const res = await fetch("/sounds/crash.wav"); // short, bassy
-        const arr = await res.arrayBuffer();
-        crashBuffer = await audioCtx.decodeAudioData(arr);
-    }
-
-    // --- 1. CONFIGURATION (Reactive State via Runes) ---
-    let carCount = $state(30);
-    let maxSpeed = $state(5); // Target cruising speed
-    let jitter = $state(0.1); // Probability of random braking (0 to 1)
-    let simulationRunning = $state(false);
-
-    // Constants
-    const TRACK_RADIUS = 200;
-    const TRACK_LENGTH = 2 * Math.PI * TRACK_RADIUS;
-    const CAR_LENGTH = 15; // Visual size + buffer
-
-    // --- 2. GAME STATE ---
-    // In Svelte 5, $state() creates a deeply reactive proxy.
-    // We can mutate properties inside this array freely.
-    let cars: { id: number; pos: number; vel: number; color: string }[] =
-        $state([]);
-
-    function initCars() {
-        // Create cars evenly spaced
-        cars = Array.from({ length: carCount }, (_, i) => ({
-            id: i,
-            // Position on the track (0 to TRACK_LENGTH)
-            pos: (TRACK_LENGTH / carCount) * i,
-            // Current velocity
-            vel: 0,
-            // Visual color (computed during update)
-            color: "lime",
-        }));
-    }
-
-    // --- 3. PHYSICS ENGINE ---
-    function update() {
-        if (!simulationRunning) return;
-
-        // We iterate through all cars
-        for (let i = 0; i < cars.length; i++) {
-            let car = cars[i];
-
-            // Identify the car in front (handle array wrapping)
-            let nextCarIndex = (i + 1) % cars.length;
-            let nextCar = cars[nextCarIndex];
-
-            // Calculate distance to car in front (handling loop wrap-around)
-            let distance =
-                (nextCar.pos - car.pos + TRACK_LENGTH) % TRACK_LENGTH;
-
-            // --- PHYSICS LOGIC ---
-
-            // 1. Acceleration (Cruise Control)
-            if (car.vel < maxSpeed) {
-                car.vel += 0.05;
-            }
-
-            // 2. Braking (Collision Avoidance)
-            // If we are getting too close relative to our speed
-            if (distance < CAR_LENGTH + car.vel * 3) {
-                car.vel *= 0.9; // Smooth braking
-            }
-            // Emergency stop prevents overlap
-            if (distance < CAR_LENGTH) {
-                const impact = Math.min(car.vel / maxSpeed, 1);
-
-                playCrash(impact);
-
-                car.vel = 0;
-                car.pos -= 0.5; // Slight bounce back to separate
-            }
-
-            // 3. The "Phantom Jam" Factor (Random Noise)
-            // Randomly tap brakes if we are moving fast enough
-            if (car.vel > 1 && Math.random() < jitter) {
-                car.vel *= 0.8;
-            }
-
-            // 4. Update Position
-            car.pos = (car.pos + car.vel) % TRACK_LENGTH;
-
-            // 5. Update Color for Visualization
-            // Red = Stopped, Yellow = Slow, Green = Fast
-            if (car.vel < 0.5)
-                car.color = "#ff3e3e"; // Red
-            else if (car.vel < maxSpeed * 0.5)
-                car.color = "#ffc800"; // Orange
-            else car.color = "#4ade80"; // Green
+        try {
+            audioCtx = new AudioContext();
+            // Ensure you have a file at static/sounds/crash.wav
+            const res = await fetch("/sounds/crash.wav");
+            if (!res.ok) throw new Error("Sound not found");
+            const arr = await res.arrayBuffer();
+            crashBuffer = await audioCtx.decodeAudioData(arr);
+        } catch (e) {
+            console.warn(
+                "Audio setup failed (ignore if you lack the wav file):",
+                e,
+            );
         }
-
-        requestAnimationFrame(update);
     }
+
+    // This function is passed down to Scene.svelte
     function playCrash(intensity: number) {
-        if (!crashBuffer) return;
+        if (!crashBuffer || !audioCtx) return;
+
+        // Resume context if browser suspended it (common in Chrome)
+        if (audioCtx.state === "suspended") audioCtx.resume();
 
         const src = audioCtx.createBufferSource();
         const gain = audioCtx.createGain();
-        const delay = audioCtx.createDelay();
 
         src.buffer = crashBuffer;
-
-        // pitch = impact + tiny randomness (prevents repetition fatigue)
+        // Varry pitch slightly for realism
         src.playbackRate.value =
             (0.8 + intensity * 0.4) * (0.95 + Math.random() * 0.1);
+        // Volume based on impact
+        gain.gain.value = Math.min(intensity, 1) * 0.4;
 
-        // loudness = impact strength
-        gain.gain.value = Math.min(intensity, 1);
-
-        // micro echo (physical "clack")
-        delay.delayTime.value = 0.03;
-
-        // audio graph
-        src.connect(gain).connect(delay).connect(audioCtx.destination);
-
+        src.connect(gain).connect(audioCtx.destination);
         src.start();
     }
 
-    // --- 4. LIFECYCLE ---
     onMount(() => {
-        initCars();
-        loadSound();
-        simulationRunning = true;
-        requestAnimationFrame(update);
-
-        return () => {
-            simulationRunning = false;
+        // Initialize audio on first user interaction to satisfy browser policies
+        const initAudio = () => {
+            loadSound();
+            window.removeEventListener("click", initAudio);
+            window.removeEventListener("keydown", initAudio);
         };
-    });
-
-    // Re-init cars if the count changes
-    // We use $effect to track the `carCount` dependency
-    $effect(() => {
-        // Only re-init if the array length doesn't match the slider
-        if (cars.length !== carCount) {
-            initCars();
-        }
+        window.addEventListener("click", initAudio);
+        window.addEventListener("keydown", initAudio);
     });
 </script>
 
 <div class="container">
     <div class="game-layout">
         <div class="card controls">
-            <h2>Traffic Simulator</h2>
+            <h2>Traffic Sim 3D</h2>
             <p class="description">
-                Adjust the sliders to see how "Phantom Jams" form without any
-                accidents.
+                Adjust parameters to observe "Phantom Traffic Jams".
             </p>
 
             <div class="control-group">
@@ -169,7 +84,7 @@
 
             <div class="control-group">
                 <label>
-                    <span>Density (Cars): <strong>{carCount}</strong></span>
+                    <span>Density: <strong>{carCount}</strong></span>
                     <input
                         type="range"
                         min="10"
@@ -182,7 +97,7 @@
             <div class="control-group">
                 <label>
                     <span
-                        >Human Error (Jitter): <strong
+                        >Chaos (Jitter): <strong
                             >{(jitter * 100).toFixed(0)}%</strong
                         ></span
                     >
@@ -199,122 +114,20 @@
                 </label>
             </div>
 
-            <button class="reset-btn" onclick={initCars}
-                >Reset Simulation</button
-            >
+            <div class="info">
+                <small>Click anywhere to enable audio.</small>
+            </div>
         </div>
 
-        <div class="visualization">
-            <svg viewBox="0 0 500 500" class="track-svg">
-                <circle
-                    cx="250"
-                    cy="250"
-                    r={TRACK_RADIUS}
-                    stroke="#1f2937"
-                    stroke-width="40"
-                    fill="none"
-                />
-                <circle
-                    cx="250"
-                    cy="250"
-                    r={TRACK_RADIUS}
-                    stroke="#374151"
-                    stroke-width="38"
-                    fill="none"
-                    stroke-dasharray="10 20"
-                />
-
-                {#each cars as car (car.id)}<g
-                        transform="rotate({(car.pos / TRACK_LENGTH) *
-                            360} 250 250)"
-                    >
-                        <!-- car -->
-                        <g
-                            transform="translate({250 - 12} {250 -
-                                TRACK_RADIUS -
-                                10})"
-                        >
-                            <!-- body -->
-                            <rect
-                                x="0"
-                                y="0"
-                                width="24"
-                                height="16"
-                                rx="4"
-                                fill={car.color}
-                                stroke="rgba(0,0,0,0.3)"
-                                stroke-width="1"
-                            />
-
-                            <!-- windshield -->
-                            <rect
-                                x="4"
-                                y="2"
-                                width="16"
-                                height="4"
-                                rx="2"
-                                fill="rgba(255,255,255,0.5)"
-                            />
-
-                            <!-- rear window -->
-                            <rect
-                                x="6"
-                                y="10"
-                                width="12"
-                                height="3"
-                                rx="1.5"
-                                fill="rgba(0,0,0,0.2)"
-                            />
-
-                            <!-- wheels -->
-                            <rect
-                                x="-2"
-                                y="3"
-                                width="2"
-                                height="4"
-                                rx="1"
-                                fill="#222"
-                            />
-                            <rect
-                                x="-2"
-                                y="9"
-                                width="2"
-                                height="4"
-                                rx="1"
-                                fill="#222"
-                            />
-                            <rect
-                                x="24"
-                                y="3"
-                                width="2"
-                                height="4"
-                                rx="1"
-                                fill="#222"
-                            />
-                            <rect
-                                x="24"
-                                y="9"
-                                width="2"
-                                height="4"
-                                rx="1"
-                                fill="#222"
-                            />
-                        </g>
-                    </g>
-                {/each}
-            </svg>
+        <div class="visualization-3d">
+            <Canvas>
+                <Scene {carCount} {maxSpeed} {jitter} {playCrash} />
+            </Canvas>
         </div>
     </div>
 </div>
 
 <style>
-    :global(body) {
-        font-family: system-ui, sans-serif;
-        background: #111827;
-        color: white;
-        margin: 0;
-    }
-
     .container {
         display: flex;
         justify-content: center;
@@ -329,23 +142,25 @@
         align-items: center;
         gap: 40px;
         width: 100%;
-        max-width: 1000px;
+        max-width: 1200px;
     }
 
-    @media (min-width: 768px) {
+    @media (min-width: 900px) {
         .game-layout {
             flex-direction: row;
-            justify-content: space-around;
+            align-items: flex-start;
+            justify-content: space-between;
         }
     }
 
     .card {
-        background: #1f2937;
-        padding: 2rem;
+        background: rgba(0, 0, 0, 0.5);
         border-radius: 1rem;
+        padding: 2rem;
         box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
         width: 100%;
         max-width: 350px;
+        flex-shrink: 0;
     }
 
     h2 {
@@ -374,32 +189,25 @@
         color: #6b7280;
         font-size: 0.75rem;
     }
-
-    .reset-btn {
-        width: 100%;
-        padding: 10px;
-        background: #4ade80;
-        border: none;
-        border-radius: 6px;
-        color: #064e3b;
-        font-weight: bold;
-        cursor: pointer;
-        transition: background 0.2s;
-    }
-    .reset-btn:hover {
-        background: #22c55e;
+    .info {
+        margin-top: 1rem;
+        color: #6b7280;
+        font-style: italic;
+        font-size: 0.8rem;
     }
 
-    .visualization {
+    .visualization-3d {
         flex-grow: 1;
-        display: flex;
-        justify-content: center;
-    }
-
-    .track-svg {
+        height: 600px;
         width: 100%;
-        max-width: 600px;
-        height: auto;
-        filter: drop-shadow(0 0 20px rgba(74, 222, 128, 0.1));
+        /* CHANGE: New Paper Background Color */
+        background: #f8f8f0;
+        border-radius: 1rem;
+        /* Lighter shadow for the paper look */
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+        position: relative;
+        /* Optional: Add a subtle paper texture pattern if you have one */
+        /* background-image: url('/paper-noise.png'); */
     }
 </style>
