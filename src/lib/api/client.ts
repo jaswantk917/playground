@@ -8,7 +8,7 @@ class ApiClient {
   private baseUrl: string;
 
   constructor(baseUrl: string) {
-    this.baseUrl = baseUrl || "http://localhost:3001";
+    this.baseUrl = baseUrl || "https://api.bionaraq.info";
   }
 
   /**
