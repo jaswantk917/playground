@@ -74,6 +74,4 @@ class ApiClient {
   }
 }
 
-export const api = new ApiClient(
-  PUBLIC_API_URL || "https://apis.bionaraq.info",
-);
+export const api = new ApiClient(API_URL || "https://apis.bionaraq.info");
